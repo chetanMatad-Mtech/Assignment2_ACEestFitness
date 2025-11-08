@@ -4,7 +4,7 @@ pipeline {
     environment {
         DOCKER_IMAGE_NAME = "chetanmatadmtech/fitness-app"
         DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
-        APP_NAME = "ACEestFitness"
+        APP_NAME = "Application"
         VERSION = "v${BUILD_NUMBER}" 
     }
 
@@ -76,15 +76,15 @@ pipeline {
 
         stage('Build Artifact') {
             steps {
-                echo "Building artifact for ${APP_NAME} version ${VERSION}..."
-                sh '''
-                    mkdir -p build_output
-                    cp application.py build_output/${APP_NAME}_${VERSION}.py
-                    cd build_output
-                    zip ${APP_NAME}_${VERSION}.zip ${APP_NAME}_${VERSION}.py
-                '''
-            }
-        }
+        	echo "Building artifact for ${APP_NAME} version ${VERSION}..."
+        	sh """
+            	mkdir -p build_output
+            	cp Application.py build_output/${APP_NAME}_${VERSION}.py
+            	cd build_output
+            	zip ${APP_NAME}_${VERSION}.zip ${APP_NAME}_${VERSION}.py
+        	"""
+    		}
+    	}
 
         stage('Archive Artifact') {
             steps {
