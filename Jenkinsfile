@@ -24,7 +24,7 @@ pipeline {
 
     stage('Run Tests') {
     steps {
-        echo "Running automated tests..."
+        echo "Running Automated tests..."
         sh '''
             set -e
             python3 -m pytest --maxfail=1 --disable-warnings -q
