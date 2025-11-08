@@ -87,7 +87,6 @@ pipeline {
                 archiveArtifacts artifacts: 'build_output/*.zip', fingerprint: true
             }
         }
-    }
     post {
         success {
             echo "Build and push completed successfully!"
