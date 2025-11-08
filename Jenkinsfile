@@ -1,7 +1,7 @@
 pipeline {
     agent any
     environment {
-        DOCKER_IMAGE_NAME = "chetanmatadmtech/Fitness-app"
+        DOCKER_IMAGE_NAME = "chetanmatadmtech/fitness-app:${BUILD_NUMBER}"
     }
     stages {
         stage('Checkout') {
