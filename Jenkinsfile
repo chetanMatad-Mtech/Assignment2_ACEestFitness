@@ -14,36 +14,23 @@ pipeline {
             }
         }
 
-        stage('Install Dependencies & Run Tests') {
-    	steps {
-    	    echo "Setting up Python environment and running tests..."
-    	    sh '''
-    	        set -e
+    stage('Setup Environment') {
+        steps {
+            echo 'Installing Python dependencies...'
+            sh 'pip install -r requirements.txt'
+            sh 'pip install pytest'
+        }
+    }
 
-    	        # Ensure Python is available
-    	        python3 --version
-
-    	        # Create virtual environment if not exists
-    	        if [ ! -d "venv" ]; then
-    	            echo "Creating virtual environment..."
-    	            python3 -m venv venv
-    	        fi
-
-    	        # Activate the environment
-    	        . venv/bin/activate
-
-    	        # Upgrade pip and install dependencies
-    	        pip install --upgrade pip
-    	        if [ -f "requirements.txt" ]; then
-    	            pip install -r requirements.txt
-    	        fi
-
-    	        # Run tests
-    	        pytest --maxfail=1 --disable-warnings -q || exit 1
-    	    '''
-    	    }
-	}
-
+    stage('Run Tests') {
+    steps {
+        echo "Running automated tests..."
+        sh '''
+            set -e
+            python3 -m pytest --maxfail=1 --disable-warnings -q
+        '''
+    }
+}
 
     stage('Build Docker Image') {
             steps {
