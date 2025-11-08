@@ -14,6 +14,24 @@ pipeline {
             }
         }
 
+    stage('Setup Environment') {
+        steps {
+            echo 'Installing Python dependencies...'
+            sh 'pip install -r requirements.txt'
+            sh 'pip install pytest'
+        }
+    }
+
+    stage('Run Unit Tests') {
+        steps {
+            echo 'Running automated tests...'
+            sh '''
+                . venv/bin/activate
+                pytest --maxfail=1 --disable-warnings -q || exit 1
+            '''
+        }
+    }
+
     stage('Build Docker Image') {
             steps {
                 script {
