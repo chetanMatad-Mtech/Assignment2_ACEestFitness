@@ -14,23 +14,27 @@ pipeline {
             }
         }
 
-    stage('Setup Environment') {
-        steps {
-            echo 'Installing Python dependencies...'
-            sh 'pip install -r requirements.txt'
-            sh 'pip install pytest'
+        stage('Install Dependencies & Run Tests') {
+            steps {
+                echo 'Setting up Python environment and running tests...'
+                sh '''
+                    set -e
+                    if [ ! -d "venv" ]; then
+                        echo "Creating virtual environment..."
+                        python3 -m venv venv
+                    fi
+                    echo "Activating venv and installing dependencies..."
+                    . venv/bin/activate
+                    pip install --upgrade pip
+                    if [ -f requirements.txt ]; then
+                        pip install -r requirements.txt
+                    fi
+                    pip install pytest
+                    echo "Running automated tests..."
+                    pytest --maxfail=1 --disable-warnings -q || exit 1
+                '''
+            }
         }
-    }
-
-    stage('Run Unit Tests') {
-        steps {
-            echo 'Running automated tests...'
-            sh '''
-                . venv/bin/activate
-                pytest --maxfail=1 --disable-warnings -q || exit 1
-            '''
-        }
-    }
 
     stage('Build Docker Image') {
             steps {
