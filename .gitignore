@@ -1,0 +1,23 @@
+# Pythonn
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+ENV/
+env/
+
+#VS Code 
+.vscode/
+
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+ENV/
+env/
+
+#VS Code 
+.vscode/
+
