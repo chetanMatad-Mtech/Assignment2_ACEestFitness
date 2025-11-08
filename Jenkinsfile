@@ -1,7 +1,8 @@
 pipeline {
     agent any
     environment {
-        DOCKER_IMAGE_NAME = "chetanmatadmtech/fitness-app:${BUILD_NUMBER}"   // Your Docker Hub repo name
+        DOCKER_IMAGE_NAME = "chetanmatadmtech/fitness-app:${BUILD_NUMBER}"
+        DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
     }
 
     stages {
