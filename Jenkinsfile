@@ -1,21 +1,3 @@
-        stage('Build Docker Image') {
-            steps {
-                sh 'docker build -t $DOCKER_IMAGE_NAME .'
-            }
-        }
-        stage('Push Docker Image') {
-            steps {
-                withCredentials([string(credentialsId: 'dockerhub-password', variable: 'DOCKERHUB_PASS')]) {
-                    sh '''
-                        echo $DOCKERHUB_PASS | docker login -u chetanmatadmtech --password-stdin
-                        docker push $DOCKER_IMAGE_NAME
-                    '''
-                }
-            }
-        }
-    }
-}
-
 pipeline {
     agent any
     environment {
@@ -69,10 +51,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Build and push completed successfully!"
+            echo "Build and push completed successfully!"
         }
         failure {
-            echo "❌ Build failed. Please check the console output for details."
+            echo "Build failed. Please check the console output for details."
         }
     }
 }
