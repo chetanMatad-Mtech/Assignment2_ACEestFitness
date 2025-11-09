@@ -175,5 +175,38 @@ pipeline {
                                         "type": "RollingUpdate",
                                         "rollingUpdate": {
                                             "maxSurge": "${ROLLING_UPDATE_MAX_SURGE}",
-                                            "maxUnavailable": "${ROLLING_UPDATE_MAX_UNAVAIL_
+                                            "maxUnavailable": "${ROLLING_UPDATE_MAX_UNAVAILABLE}"
+                                        }
+                                    }
+                                }
+                            }'
+                            kubectl rollout status deployment/${GREEN_DEPLOYMENT_NAME} --timeout=180s
+                            echo "Rolling Update completed."
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Build Artifact') {
+            steps {
+                sh """
+                    mkdir -p build_output
+                    cp Application.py build_output/${APP_NAME}_${VERSION}.py
+                    cd build_output
+                    zip ${APP_NAME}_${VERSION}.zip ${APP_NAME}_${VERSION}.py
+                """
+            }
+        }
+
+        stage('Archive Artifact') {
+            steps { archiveArtifacts artifacts: 'build_output/*.zip', fingerprint: true }
+        }
+    }
+
+    post {
+        success { echo "Pipeline completed successfully!" }
+        failure { echo "Pipeline failed. Rollback executed if needed." }
+    }
+}
 
