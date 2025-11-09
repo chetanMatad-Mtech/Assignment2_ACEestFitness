@@ -105,9 +105,17 @@ pipeline {
 	stage('Deploy Green') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
-                        sh 'export KUBECONFIG=$KUBECONFIG_FILE'
-                        
+withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+  			  sh '''
+  			      echo "Setting KUBECONFIG for this session..."
+  			      export KUBECONFIG=$KUBECONFIG_FILE
+ 			      echo "Checking Kubernetes context..."
+ 			      kubectl config current-context
+ 			      echo "Verifying access..."
+			      kubectl cluster-info
+    			'''
+			}
+
                         echo "Deploying new 'Green' version..."
                         // This YAML needs to be templated to use the new image tag.
                         // A simple way is to use 'sed' to replace a placeholder.
