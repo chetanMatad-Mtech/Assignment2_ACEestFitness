@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fitness-app-blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: fitness-app
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: fitness-app
+        version: v1 # Label for the selector
+    spec:
+      containers:
+      - name: fitness-app
+        image: chetanmatadmtech/fitness-app:v1
+        ports:
+        - containerPort: 8080

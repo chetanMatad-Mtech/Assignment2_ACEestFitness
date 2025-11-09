@@ -57,6 +57,34 @@ pipeline {
             }
         }
 
+	stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    // Use the 'kubeconfig-minikube' credentials you set up
+                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+                        // Tell kubectl to use this specific config file
+                        sh 'export KUBECONFIG=$KUBECONFIG_FILE'
+                        
+                        echo "Applying base Kubernetes configuration..."
+                        // This will create or update your service and deployment
+                        sh "kubectl apply -f deployment.yaml"
+
+                        echo "Triggering Rolling Update with new image..."
+                        // Now, set the new image on the deployment
+                        // This triggers the zero-downtime rolling update
+                        sh """
+                            kubectl set image deployment/fitness-app-deployment \
+                            fitness-app-container=${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+                        """
+                        
+                        echo "Waiting for rollout to complete..."
+                        sh "kubectl rollout status deployment/fitness-app-deployment"
+                        
+                        echo "Deployment successful!"
+                    }
+                }
+            }
+        }
         stage('Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(
@@ -74,6 +102,47 @@ pipeline {
             }
         }
 
+	stage('Deploy Green') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+                        sh 'export KUBECONFIG=$KUBECONFIG_FILE'
+                        
+                        echo "Deploying new 'Green' version..."
+                        // This YAML needs to be templated to use the new image tag.
+                        // A simple way is to use 'sed' to replace a placeholder.
+                        sh "sed 's/IMAGE_PLACEHOLDER/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}/g' green-deployment-template.yaml > green-deployment.yaml"
+                        sh "kubectl apply -f green-deployment.yaml"
+                        
+                        echo "Waiting for 'Green' to be ready..."
+                        sh "kubectl rollout status deployment/fitness-app-green"
+                    }
+                }
+            }
+        }
+        
+        stage('Manual Approval: Go Live?') {
+            steps {
+                // This pauses the pipeline and waits for a human to click "Proceed"
+                input message: "The 'Green' (v${BUILD_NUMBER}) deployment is ready. Please test it. Do you want to switch all live traffic to it?"
+            }
+        }
+
+        stage('Promote Green to Live') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+                        sh 'export KUBECONFIG=$KUBECONFIG_FILE'
+                        
+                        echo "Switching service selector to 'Green'..."
+                        sh "kubectl patch service fitness-app-service -p '{\"spec\":{\"selector\":{\"version\":\"green\"}}}'"
+                        echo "Traffic switched!"
+                        
+                        // You would also want to tear down the old 'Blue' deployment
+                    }
+                }
+            }
+        }
         stage('Build Artifact') {
             steps {
         	echo "Building artifact for ${APP_NAME} version ${VERSION}..."

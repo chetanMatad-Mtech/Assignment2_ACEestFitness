@@ -47,7 +47,7 @@ def home():
 @app.route("/add", methods=["POST"])
 def add_workout():
     workout = request.form.get("workout")
-    duration = request.form.get("duration")
+    duration = request.form.get("duration in tme")
 
     if workout and duration.isdigit():
         workouts.append({"workout": workout, "duration": int(duration)})
