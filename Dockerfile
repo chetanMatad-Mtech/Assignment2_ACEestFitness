@@ -14,7 +14,7 @@ RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.
 EXPOSE 8080
 
 # Set environment variables for Flask
-ENV FLASK_APP=application.py
+ENV FLASK_APP=Application.py
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV FLASK_ENV=production
 
