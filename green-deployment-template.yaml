@@ -7,16 +7,28 @@ spec:
   selector:
     matchLabels:
       app: fitness-app
-      version: green
+      version: VERSION_PLACEHOLDER   # Dynamic version label
   template:
     metadata:
       labels:
         app: fitness-app
-        version: green
+        version: VERSION_PLACEHOLDER   # Dynamic version label
     spec:
       containers:
-        - name: fitness-app-container
-          image: IMAGE_PLACEHOLDER
-          ports:
-            - containerPort: 8080
+      - name: fitness-app-container
+        image: IMAGE_PLACEHOLDER       # Dynamic image
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
 
