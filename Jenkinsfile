@@ -43,12 +43,10 @@ pipeline {
             steps {
                 script {
                     def dockerfileDir = './Assignment2_ACEestFitness'
-
-                    // Detect if Dockerfile is in root or subfolder
                     if (fileExists('Dockerfile')) {
                         dockerfileDir = '.'
                     } else if (!fileExists("${dockerfileDir}/Dockerfile")) {
-                        error " Dockerfile not found. Please check the folder path."
+                        error "Dockerfile not found. Please check the folder path."
                     }
 
                     echo "Building Docker image from: ${dockerfileDir}"
@@ -57,34 +55,37 @@ pipeline {
             }
         }
 
-	stage('Deploy to Kubernetes') {
+        stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    // Use the 'kubeconfig-minikube' credentials you set up
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
-                        // Tell kubectl to use this specific config file
-                        sh 'export KUBECONFIG=$KUBECONFIG_FILE'
-                        
-                        echo "Applying base Kubernetes configuration..."
-                        // This will create or update your service and deployment
-                        sh "kubectl apply -f deployment.yaml"
+                        sh '''
+                            echo "Setting up KUBECONFIG..."
+                            export KUBECONFIG=$KUBECONFIG_FILE
 
-                        echo "Triggering Rolling Update with new image..."
-                        // Now, set the new image on the deployment
-                        // This triggers the zero-downtime rolling update
-                        sh """
+                            echo "Verifying cluster connection..."
+                            kubectl config current-context || exit 1
+                            kubectl cluster-info || exit 1
+                            kubectl get nodes
+
+                            echo "Applying Deployment and Service..."
+                            kubectl apply -f deployment.yaml --validate=false
+                            kubectl apply -f service.yaml --validate=false
+
+                            echo "Updating image for rolling update..."
                             kubectl set image deployment/fitness-app-deployment \
-                            fitness-app-container=${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
-                        """
-                        
-                        echo "Waiting for rollout to complete..."
-                        sh "kubectl rollout status deployment/fitness-app-deployment"
-                        
-                        echo "Deployment successful!"
+                                fitness-app-container=${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+
+                            echo "Waiting for rollout to complete..."
+                            kubectl rollout status deployment/fitness-app-deployment --timeout=60s
+
+                            echo "Deployment successful!"
+                        '''
                     }
                 }
             }
         }
+
         stage('Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(
@@ -102,36 +103,32 @@ pipeline {
             }
         }
 
-	stage('Deploy Green') {
+        stage('Deploy Green') {
             steps {
                 script {
-withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
-  			  sh '''
-  			      echo "Setting KUBECONFIG for this session..."
-  			      export KUBECONFIG=$KUBECONFIG_FILE
- 			      echo "Checking Kubernetes context..."
- 			      kubectl config current-context
- 			      echo "Verifying access..."
-			      kubectl cluster-info
-    			'''
-			}
+                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+                        sh '''
+                            echo "Setting KUBECONFIG for this session..."
+                            export KUBECONFIG=$KUBECONFIG_FILE
+                            echo "Checking Kubernetes context..."
+                            kubectl config current-context
+                            echo "Verifying access..."
+                            kubectl cluster-info
 
-                        echo "Deploying new 'Green' version..."
-                        // This YAML needs to be templated to use the new image tag.
-                        // A simple way is to use 'sed' to replace a placeholder.
-                        sh "sed 's/IMAGE_PLACEHOLDER/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}/g' green-deployment-template.yaml > green-deployment.yaml"
-                        sh "kubectl apply -f green-deployment.yaml"
-                        
-                        echo "Waiting for 'Green' to be ready..."
-                        sh "kubectl rollout status deployment/fitness-app-green"
+                            echo "Deploying new 'Green' version..."
+                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g" green-deployment-template.yaml > green-deployment.yaml
+                            kubectl apply -f green-deployment.yaml --validate=false
+
+                            echo "Waiting for 'Green' to be ready..."
+                            kubectl rollout status deployment/fitness-app-green --timeout=60s
+                        '''
                     }
                 }
             }
         }
-        
+
         stage('Manual Approval: Go Live?') {
             steps {
-                // This pauses the pipeline and waits for a human to click "Proceed"
                 input message: "The 'Green' (v${BUILD_NUMBER}) deployment is ready. Please test it. Do you want to switch all live traffic to it?"
             }
         }
@@ -140,28 +137,30 @@ withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFI
             steps {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
-                        sh 'export KUBECONFIG=$KUBECONFIG_FILE'
-                        
-                        echo "Switching service selector to 'Green'..."
-                        sh "kubectl patch service fitness-app-service -p '{\"spec\":{\"selector\":{\"version\":\"green\"}}}'"
-                        echo "Traffic switched!"
-                        
-                        // You would also want to tear down the old 'Blue' deployment
+                        sh '''
+                            echo "Switching KUBECONFIG..."
+                            export KUBECONFIG=$KUBECONFIG_FILE
+
+                            echo "Switching service selector to 'Green'..."
+                            kubectl patch service fitness-app-service -p '{"spec":{"selector":{"version":"green"}}}'
+                            echo "Traffic switched!"
+                        '''
                     }
                 }
             }
         }
+
         stage('Build Artifact') {
             steps {
-        	echo "Building artifact for ${APP_NAME} version ${VERSION}..."
-        	sh """
-            	mkdir -p build_output
-            	cp Application.py build_output/${APP_NAME}_${VERSION}.py
-            	cd build_output
-            	zip ${APP_NAME}_${VERSION}.zip ${APP_NAME}_${VERSION}.py
-        	"""
-    		}
-    	}
+                echo "Building artifact for ${APP_NAME} version ${VERSION}..."
+                sh """
+                    mkdir -p build_output
+                    cp Application.py build_output/${APP_NAME}_${VERSION}.py
+                    cd build_output
+                    zip ${APP_NAME}_${VERSION}.zip ${APP_NAME}_${VERSION}.py
+                """
+            }
+        }
 
         stage('Archive Artifact') {
             steps {
