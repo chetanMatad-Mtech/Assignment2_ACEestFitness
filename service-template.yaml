@@ -9,5 +9,5 @@ spec:
     targetPort: 8080
   selector:
     app: fitness-app
-    version: VERSION_PLACEHOLDER   # Jenkins will replace this dynamically
+    version: VERSION_PLACEHOLDER   # dynamic
 

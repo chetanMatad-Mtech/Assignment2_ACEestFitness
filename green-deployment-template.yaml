@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: fitness-app-green
+  name: fitness-app-green-VERSION_PLACEHOLDER   # dynamic per build
 spec:
-  replicas: 4
+  replicas: 2
   selector:
     matchLabels:
       app: fitness-app
-      version: VERSION_PLACEHOLDER   # Dynamic version label
+      version: VERSION_PLACEHOLDER
   template:
     metadata:
       labels:
         app: fitness-app
-        version: VERSION_PLACEHOLDER   # Dynamic version label
+        version: VERSION_PLACEHOLDER
     spec:
       containers:
       - name: fitness-app-container
-        image: IMAGE_PLACEHOLDER       # Dynamic image
+        image: IMAGE_PLACEHOLDER
         ports:
         - containerPort: 8080
         readinessProbe:

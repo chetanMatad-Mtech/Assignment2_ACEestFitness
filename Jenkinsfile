@@ -6,6 +6,8 @@ pipeline {
         DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
         APP_NAME = "Application"
         VERSION = "v${BUILD_NUMBER}" 
+        BLUE_DEPLOYMENT_NAME = "fitness-app-blue-v${BUILD_NUMBER}"
+        GREEN_DEPLOYMENT_NAME = "fitness-app-green-v${BUILD_NUMBER}"
     }
 
     stages {
@@ -77,19 +79,18 @@ pipeline {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
                         sh """
-                            echo "Setting KUBECONFIG for Blue deployment..."
                             export KUBECONFIG=$KUBECONFIG_FILE
 
-                            echo "Deploying 'Blue' version..."
-                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; s|VERSION_PLACEHOLDER|v${BUILD_NUMBER}|g" blue-deployment-template.yaml > blue-deployment.yaml
+                            echo "Deploying Blue version..."
+                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|${BLUE_DEPLOYMENT_NAME}|g" blue-deployment-template.yaml > blue-deployment.yaml
                             kubectl apply -f blue-deployment.yaml --validate=false
 
-                            echo "Updating service selector to Blue..."
-                            sed "s|VERSION_PLACEHOLDER|v${BUILD_NUMBER}|g" service-template.yaml > service.yaml
+                            echo "Updating Service to point to Blue..."
+                            sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
                             kubectl apply -f service.yaml --validate=false
 
-                            echo "Waiting for 'Blue' rollout..."
-                            kubectl rollout status deployment/fitness-app-blue --timeout=120s
+                            echo "Waiting for Blue rollout..."
+                            kubectl rollout status deployment/${BLUE_DEPLOYMENT_NAME} --timeout=120s
                         """
                     }
                 }
@@ -101,15 +102,14 @@ pipeline {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
                         sh """
-                            echo "Setting KUBECONFIG for Green deployment..."
                             export KUBECONFIG=$KUBECONFIG_FILE
 
-                            echo "Deploying 'Green' version..."
-                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; s|VERSION_PLACEHOLDER|v${BUILD_NUMBER}|g" green-deployment-template.yaml > green-deployment.yaml
+                            echo "Deploying Green version..."
+                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|${GREEN_DEPLOYMENT_NAME}|g" green-deployment-template.yaml > green-deployment.yaml
                             kubectl apply -f green-deployment.yaml --validate=false
 
-                            echo "Waiting for 'Green' rollout..."
-                            kubectl rollout status deployment/fitness-app-green --timeout=120s
+                            echo "Waiting for Green rollout..."
+                            kubectl rollout status deployment/${GREEN_DEPLOYMENT_NAME} --timeout=120s
                         """
                     }
                 }
@@ -118,7 +118,7 @@ pipeline {
 
         stage('Manual Approval: Go Live?') {
             steps {
-                input message: "The 'Green' deployment (v${BUILD_NUMBER}) is ready. Do you want to switch live traffic to it?"
+                input message: "The Green deployment (${VERSION}) is ready. Switch live traffic?"
             }
         }
 
@@ -127,11 +127,10 @@ pipeline {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
                         sh """
-                            echo "Switching KUBECONFIG..."
                             export KUBECONFIG=$KUBECONFIG_FILE
 
-                            echo "Switching service selector to Green..."
-                            sed "s|VERSION_PLACEHOLDER|v${BUILD_NUMBER}|g" service-template.yaml > service.yaml
+                            echo "Switching Service selector to Green..."
+                            sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
                             kubectl apply -f service.yaml --validate=false
 
                             echo "Traffic switched to Green!"
