@@ -66,8 +66,8 @@ pipeline {
                 sh '''
                     # Assumes Jenkins is running on EC2 with IAM role having ECS permissions
                     aws ecs update-service \
-                        --cluster fitness-cluster \
-                        --service fitness-service \
+                        --cluster fitness-app-cluster-chetan \
+                        --service fitness-app-task-chetan-service-zi3p6y8b \
                         --force-new-deployment
                 '''
             }
