@@ -6,8 +6,6 @@ pipeline {
         DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
         APP_NAME = "Application"
         VERSION = "v${BUILD_NUMBER}" 
-        BLUE_DEPLOYMENT_NAME = "fitness-app-blue-v${BUILD_NUMBER}"
-        GREEN_DEPLOYMENT_NAME = "fitness-app-green-v${BUILD_NUMBER}"
     }
 
     stages {
@@ -74,67 +72,62 @@ pipeline {
             }
         }
 
-        stage('Deploy Blue') {
+        stage('Determine Deployment') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            export KUBECONFIG=$KUBECONFIG_FILE
+                    def liveVersion = sh(
+                        script: "kubectl get service fitness-app-service -o jsonpath='{.spec.selector.version}' || echo 'none'",
+                        returnStdout: true
+                    ).trim()
 
-                            echo "Deploying Blue version..."
-                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|${BLUE_DEPLOYMENT_NAME}|g" blue-deployment-template.yaml > blue-deployment.yaml
-                            kubectl apply -f blue-deployment.yaml --validate=false
-
-                            echo "Updating Service to point to Blue..."
-                            sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
-                            kubectl apply -f service.yaml --validate=false
-
-                            echo "Waiting for Blue rollout..."
-                            kubectl rollout status deployment/${BLUE_DEPLOYMENT_NAME} --timeout=120s
-                        """
+                    if (liveVersion == "none" || liveVersion.contains("green")) {
+                        env.NEXT_DEPLOYMENT = "blue"
+                        env.CURRENT_DEPLOYMENT = "green"
+                    } else {
+                        env.NEXT_DEPLOYMENT = "green"
+                        env.CURRENT_DEPLOYMENT = "blue"
                     }
+
+                    env.NEXT_DEPLOYMENT_NAME = "fitness-app-${env.NEXT_DEPLOYMENT}-v${BUILD_NUMBER}"
+                    env.CURRENT_DEPLOYMENT_NAME = "fitness-app-${env.CURRENT_DEPLOYMENT}-v${BUILD_NUMBER}"
+
+                    echo "Current live deployment: ${env.CURRENT_DEPLOYMENT_NAME}"
+                    echo "Next deployment: ${env.NEXT_DEPLOYMENT_NAME}"
                 }
             }
         }
 
-        stage('Deploy Green') {
+        stage('Deploy Next') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            export KUBECONFIG=$KUBECONFIG_FILE
+                        try {
+                            sh """
+                                export KUBECONFIG=$KUBECONFIG_FILE
 
-                            echo "Deploying Green version..."
-                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|${GREEN_DEPLOYMENT_NAME}|g" green-deployment-template.yaml > green-deployment.yaml
-                            kubectl apply -f green-deployment.yaml --validate=false
+                                echo "Deploying ${NEXT_DEPLOYMENT} version..."
+                                sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
+                                     s|VERSION_PLACEHOLDER|${VERSION}|g; \
+                                     s|DEPLOYMENT_NAME_PLACEHOLDER|${NEXT_DEPLOYMENT_NAME}|g" ${NEXT_DEPLOYMENT}-deployment-template.yaml > deployment.yaml
+                                kubectl apply -f deployment.yaml --validate=false
 
-                            echo "Waiting for Green rollout..."
-                            kubectl rollout status deployment/${GREEN_DEPLOYMENT_NAME} --timeout=120s
-                        """
-                    }
-                }
-            }
-        }
+                                echo "Waiting for ${NEXT_DEPLOYMENT} rollout..."
+                                kubectl rollout status deployment/${NEXT_DEPLOYMENT_NAME} --timeout=120s
 
-        stage('Manual Approval: Go Live?') {
-            steps {
-                input message: "The Green deployment (${VERSION}) is ready. Switch live traffic?"
-            }
-        }
+                                echo "Switching service to ${NEXT_DEPLOYMENT}..."
+                                sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
+                                kubectl apply -f service.yaml --validate=false
 
-        stage('Promote Green to Live') {
-            steps {
-                script {
-                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            export KUBECONFIG=$KUBECONFIG_FILE
-
-                            echo "Switching Service selector to Green..."
-                            sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
-                            kubectl apply -f service.yaml --validate=false
-
-                            echo "Traffic switched to Green!"
-                        """
+                                echo "${NEXT_DEPLOYMENT} is now live!"
+                            """
+                        } catch (Exception e) {
+                            echo "Deployment failed, rolling back to ${CURRENT_DEPLOYMENT}..."
+                            sh """
+                                sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
+                                kubectl apply -f service.yaml --validate=false
+                            """
+                            error "Deployment failed and rollback executed!"
+                        }
                     }
                 }
             }
