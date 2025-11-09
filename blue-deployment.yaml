@@ -3,19 +3,20 @@ kind: Deployment
 metadata:
   name: fitness-app-blue
 spec:
-  replicas: 3
+  replicas: 4
   selector:
     matchLabels:
       app: fitness-app
-      version: v1
+      version: blue
   template:
     metadata:
       labels:
         app: fitness-app
-        version: v1 # Label for the selector
+        version: blue
     spec:
       containers:
-      - name: fitness-app
-        image: chetanmatadmtech/fitness-app:v1
-        ports:
-        - containerPort: 8080
+        - name: fitness-app-container
+          image: chetanmatadmtech/fitness-app:42
+          ports:
+            - containerPort: 8080
+

@@ -5,7 +5,7 @@ pipeline {
         DOCKER_IMAGE_NAME = "chetanmatadmtech/fitness-app"
         DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
         APP_NAME = "Application"
-        VERSION = "v${BUILD_NUMBER}" 
+        VERSION = "v${BUILD_NUMBER}"
     }
 
     stages {
@@ -23,7 +23,7 @@ pipeline {
                 echo 'Installing Python dependencies...'
                 sh '''
                     pip install --upgrade pip
-                    pip install -r requirements.txt || true
+                    pip install -r requirements.txt
                     pip install pytest
                 '''
             }
@@ -34,7 +34,7 @@ pipeline {
                 echo "Running Automated tests..."
                 sh '''
                     set -e
-                    python3 -m pytest --maxfail=1 --disable-warnings -q || true
+                    python3 -m pytest --maxfail=1 --disable-warnings -q
                 '''
             }
         }
@@ -42,15 +42,8 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    def dockerfileDir = './Assignment2_ACEestFitness'
-                    if (fileExists('Dockerfile')) {
-                        dockerfileDir = '.'
-                    } else if (!fileExists("${dockerfileDir}/Dockerfile")) {
-                        error "Dockerfile not found. Please check the folder path."
-                    }
-
-                    echo "Building Docker image from: ${dockerfileDir}"
-                    sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${dockerfileDir}"
+                    echo "Building Docker image..."
+                    sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ."
                 }
             }
         }
@@ -72,31 +65,17 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy Blue') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
                         sh '''
-                            echo "Setting up KUBECONFIG..."
                             export KUBECONFIG=$KUBECONFIG_FILE
 
-                            echo "Verifying cluster connection..."
-                            kubectl config current-context || exit 1
-                            kubectl cluster-info || exit 1
-                            kubectl get nodes
-
-                            echo "Applying Deployment and Service..."
-                            kubectl apply -f deployment.yaml --validate=false
-                            kubectl apply -f service.yaml --validate=false
-
-                            echo "Updating image for rolling update..."
-                            kubectl set image deployment/fitness-app-deployment \
-                                fitness-app-container=${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
-
-                            echo "Waiting for rollout to complete..."
-                            kubectl rollout status deployment/fitness-app-deployment --timeout=120s
-
-                            echo "Deployment successful!"
+                            echo "Deploying 'Blue' version..."
+                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g" blue-deployment-template.yaml > blue-deployment.yaml
+                            kubectl apply -f blue-deployment.yaml --validate=false
+                            kubectl rollout status deployment/fitness-app-blue --timeout=120s
                         '''
                     }
                 }
@@ -108,19 +87,12 @@ pipeline {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
                         sh '''
-                            echo "Setting KUBECONFIG for this session..."
                             export KUBECONFIG=$KUBECONFIG_FILE
-                            echo "Checking Kubernetes context..."
-                            kubectl config current-context
-                            echo "Verifying access..."
-                            kubectl cluster-info
 
-                            echo "Deploying new 'Green' version..."
+                            echo "Deploying 'Green' version..."
                             sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g" green-deployment-template.yaml > green-deployment.yaml
                             kubectl apply -f green-deployment.yaml --validate=false
-
-                            echo "Waiting for 'Green' to be ready..."
-                            kubectl rollout status deployment/fitness-app-green --timeout=60s
+                            kubectl rollout status deployment/fitness-app-green --timeout=120s
                         '''
                     }
                 }
@@ -129,7 +101,7 @@ pipeline {
 
         stage('Manual Approval: Go Live?') {
             steps {
-                input message: "The 'Green' (v${BUILD_NUMBER}) deployment is ready. Please test it. Do you want to switch all live traffic to it?"
+                input message: "Both 'Blue' and 'Green' deployments are ready. Do you want to switch live traffic to 'Green'?"
             }
         }
 
@@ -138,12 +110,11 @@ pipeline {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
                         sh '''
-                            echo "Switching KUBECONFIG..."
                             export KUBECONFIG=$KUBECONFIG_FILE
 
                             echo "Switching service selector to 'Green'..."
                             kubectl patch service fitness-app-service -p '{"spec":{"selector":{"version":"green"}}}'
-                            echo "Traffic switched!"
+                            echo "Traffic switched to 'Green'!"
                         '''
                     }
                 }
@@ -172,7 +143,7 @@ pipeline {
 
     post {
         success {
-            echo "Build, test, artifact creation, and Docker push completed successfully!"
+            echo "Build, test, artifact creation, Docker push, and Blue-Green deployment completed successfully!"
         }
         failure {
             echo "Build failed. Please check the console output for details."

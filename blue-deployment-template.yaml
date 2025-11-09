@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: fitness-app-green
+  name: fitness-app-blue
 spec:
   replicas: 4
   selector:
     matchLabels:
       app: fitness-app
-      version: green
+      version: blue
   template:
     metadata:
       labels:
         app: fitness-app
-        version: green
+        version: blue
     spec:
       containers:
         - name: fitness-app-container
