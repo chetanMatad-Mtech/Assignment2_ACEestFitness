@@ -2,24 +2,26 @@ pipeline {
     agent any
 
     environment {
+        // Docker Hub credentials stored in Jenkins credentials (Username/Password)
         DOCKER_HUB_CREDENTIALS = credentials('DOCKER_HUB_CREDENTIALS')
         IMAGE_NAME = "chetanmatadmtech/fitness-app"
-        IMAGE_TAG = "latest"
-        ECS_CLUSTER = "fitness-app-cluster"
-        ECS_SERVICE = "fitness-app-service"
-        ECS_TASK_FAMILY = "fitness-app-task"
+        FLASK_APP = "Application.py"
+        FLASK_RUN_HOST = "0.0.0.0"
+        FLASK_ENV = "production"
     }
 
     stages {
         stage('Checkout SCM') {
             steps {
-                checkout scm
+                git branch: 'develop',
+                    url: 'https://github.com/chetanMatad-Mtech/Assignment2_ACEestFitness.git',
+                    credentialsId: 'DOCKER_HUB_CREDENTIALS'
             }
         }
 
         stage('Setup Environment') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
                 python3 -m venv venv
                 source venv/bin/activate
                 pip install --upgrade pip
@@ -30,26 +32,26 @@ pipeline {
 
         stage('Run Tests') {
             steps {
-                sh '''#!/bin/bash
+                sh '''
                 source venv/bin/activate
-                pytest --maxfail=1 --disable-warnings -q
+                pytest
                 '''
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh '''#!/bin/bash
-                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                '''
+                sh """
+                docker build -t $IMAGE_NAME:latest .
+                """
             }
         }
 
         stage('Push Docker Image to Docker Hub') {
             steps {
                 script {
-                    withDockerRegistry([credentialsId: 'DOCKER_HUB_CREDENTIALS', url: '']) {
-                        sh "docker push ${IMAGE_NAME}:${IMAGE_TAG}"
+                    docker.withRegistry('https://index.docker.io/v1/', 'DOCKER_HUB_CREDENTIALS') {
+                        sh "docker push $IMAGE_NAME:latest"
                     }
                 }
             }
@@ -57,12 +59,17 @@ pipeline {
 
         stage('Update ECS Task Definition') {
             steps {
-                sh '''#!/bin/bash
+                sh """
+                # Assuming ECS service & cluster names
+                CLUSTER_NAME="fitness-cluster"
+                SERVICE_NAME="fitness-service"
+
+                # Force ECS to deploy the latest Docker image
                 aws ecs update-service \
-                    --cluster ${ECS_CLUSTER} \
-                    --service ${ECS_SERVICE} \
+                    --cluster $CLUSTER_NAME \
+                    --service $SERVICE_NAME \
                     --force-new-deployment
-                '''
+                """
             }
         }
     }
