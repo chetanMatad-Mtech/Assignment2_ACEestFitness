@@ -19,8 +19,7 @@ pipeline {
 
         stage('Setup Environment') {
             steps {
-                // Use a virtual environment to avoid system Python conflicts
-                sh '''
+                sh '''#!/bin/bash
                 python3 -m venv venv
                 source venv/bin/activate
                 pip install --upgrade pip
@@ -31,7 +30,7 @@ pipeline {
 
         stage('Run Tests') {
             steps {
-                sh '''
+                sh '''#!/bin/bash
                 source venv/bin/activate
                 pytest --maxfail=1 --disable-warnings -q
                 '''
@@ -40,9 +39,9 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                script {
-                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
-                }
+                sh '''#!/bin/bash
+                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
             }
         }
 
@@ -58,14 +57,12 @@ pipeline {
 
         stage('Update ECS Task Definition') {
             steps {
-                script {
-                    sh '''
-                    aws ecs update-service \
-                        --cluster ${ECS_CLUSTER} \
-                        --service ${ECS_SERVICE} \
-                        --force-new-deployment
-                    '''
-                }
+                sh '''#!/bin/bash
+                aws ecs update-service \
+                    --cluster ${ECS_CLUSTER} \
+                    --service ${ECS_SERVICE} \
+                    --force-new-deployment
+                '''
             }
         }
     }
