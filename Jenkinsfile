@@ -14,6 +14,8 @@ pipeline {
         CANARY_STEPS = "20,40,60,80,100" // traffic % steps for Canary
         CANARY_MONITOR_DURATION = "30"  // seconds to monitor each Canary step
         AB_TEST_TRAFFIC = "50,50" // percentage split for A/B Testing (A=50%, B=50%)
+        ROLLING_UPDATE_MAX_SURGE = "25%"  // Max surge for RollingUpdate
+        ROLLING_UPDATE_MAX_UNAVAILABLE = "25%" // Max unavailable pods for RollingUpdate
     }
 
     stages {
@@ -128,8 +130,8 @@ pipeline {
                         sh """
                             export KUBECONFIG=\$KUBECONFIG_FILE
                             echo "Starting A/B Testing: Version A=${abPercentages[0]}%, Version B=${abPercentages[1]}%"
+                            # Simulate A/B traffic routing
                             kubectl patch svc fitness-app-service -p '{"spec":{"selector":{"version":"vA"}}}' --type=merge
-                            # Simulate traffic split (you can integrate ingress/nginx or Istio weighted routing)
                             sleep 30
                             kubectl patch svc fitness-app-service -p '{"spec":{"selector":{"version":"vB"}}}' --type=merge
                             sleep 30
@@ -159,25 +161,19 @@ pipeline {
             }
         }
 
-        stage('Build Artifact') {
+        stage('Rolling Update') {
             steps {
-                sh """
-                    mkdir -p build_output
-                    cp Application.py build_output/${APP_NAME}_${VERSION}.py
-                    cd build_output
-                    zip ${APP_NAME}_${VERSION}.zip ${APP_NAME}_${VERSION}.py
-                """
-            }
-        }
-
-        stage('Archive Artifact') {
-            steps { archiveArtifacts artifacts: 'build_output/*.zip', fingerprint: true }
-        }
-    }
-
-    post {
-        success { echo "Pipeline completed successfully!" }
-        failure { echo "Pipeline failed. Rollback executed if needed." }
-    }
-}
+                script {
+                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+                        sh """
+                            export KUBECONFIG=\$KUBECONFIG_FILE
+                            echo "Starting Rolling Update for ${GREEN_DEPLOYMENT_NAME}..."
+                            kubectl set image deployment/${GREEN_DEPLOYMENT_NAME} ${APP_NAME}=${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+                            kubectl patch deployment ${GREEN_DEPLOYMENT_NAME} -p '{
+                                "spec": {
+                                    "strategy": {
+                                        "type": "RollingUpdate",
+                                        "rollingUpdate": {
+                                            "maxSurge": "${ROLLING_UPDATE_MAX_SURGE}",
+                                            "maxUnavailable": "${ROLLING_UPDATE_MAX_UNAVAIL_
 
