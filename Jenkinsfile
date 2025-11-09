@@ -94,7 +94,7 @@ pipeline {
                                 fitness-app-container=${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
 
                             echo "Waiting for rollout to complete..."
-                            kubectl rollout status deployment/fitness-app-deployment --timeout=60s
+                            kubectl rollout status deployment/fitness-app-deployment --timeout=120s
 
                             echo "Deployment successful!"
                         '''
