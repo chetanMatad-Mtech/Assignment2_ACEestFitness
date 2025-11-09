@@ -16,6 +16,7 @@ pipeline {
         AB_TEST_TRAFFIC = "50,50" // percentage split for A/B Testing (A=50%, B=50%)
         ROLLING_UPDATE_MAX_SURGE = "25%"  // Max surge for RollingUpdate
         ROLLING_UPDATE_MAX_UNAVAILABLE = "25%" // Max unavailable pods for RollingUpdate
+        CONTAINER_NAME = "fitness-app-container"
     }
 
     stages {
@@ -168,7 +169,7 @@ pipeline {
                         sh """
                             export KUBECONFIG=\$KUBECONFIG_FILE
                             echo "Starting Rolling Update for ${GREEN_DEPLOYMENT_NAME}..."
-                            kubectl set image deployment/${GREEN_DEPLOYMENT_NAME} ${APP_NAME}=${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
+                            kubectl set image deployment/${GREEN_DEPLOYMENT_NAME} ${CONTAINER_NAME}=${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
                             kubectl patch deployment ${GREEN_DEPLOYMENT_NAME} -p '{
                                 "spec": {
                                     "strategy": {
