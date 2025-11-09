@@ -1,12 +1,10 @@
 pipeline {
     agent any
     environment {
-        DOCKER_HUB_CREDENTIALS = credentials('DOCKER_HUB_CREDENTIALS')
-        KUBECONFIG_FILE = credentials('KUBECONFIG_FILE')
         IMAGE_NAME = "chetanmatadmtech/fitness-app"
         VERSION = "v${BUILD_NUMBER}"
+        KUBECONFIG_FILE = credentials('KUBECONFIG_FILE')
     }
-
     stages {
 
         stage('Checkout Code') {
@@ -33,40 +31,36 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                script {
-                    sh """
-                        docker build -t $IMAGE_NAME:${BUILD_NUMBER} .
-                    """
-                }
+                sh """
+                    docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} .
+                """
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB_CREDENTIALS', passwordVariable: 'DOCKER_PASS', usernameVariable: 'DOCKER_USER')]) {
+                withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB_CREDENTIALS', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
                     sh """
-                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker push $IMAGE_NAME:${BUILD_NUMBER}
-                        docker tag $IMAGE_NAME:${BUILD_NUMBER} $IMAGE_NAME:latest
-                        docker push $IMAGE_NAME:latest
+                        echo \$PASS | docker login -u \$USER --password-stdin
+                        docker push ${IMAGE_NAME}:${BUILD_NUMBER}
+                        docker tag ${IMAGE_NAME}:${BUILD_NUMBER} ${IMAGE_NAME}:latest
+                        docker push ${IMAGE_NAME}:latest
                     """
                 }
             }
         }
 
-        stage('Blue/Green Deployment') {
+        stage('Deploy Blue and Green') {
             steps {
                 withCredentials([file(credentialsId: 'KUBECONFIG_FILE', variable: 'KUBECONFIG')]) {
                     sh """
-                        export KUBECONFIG=$KUBECONFIG_FILE
-                        
                         # Blue Deployment
-                        sed 's|IMAGE_PLACEHOLDER|$IMAGE_NAME:${BUILD_NUMBER}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-blue-${VERSION}|g' blue-deployment-template.yaml > blue-deployment.yaml
+                        sed 's|IMAGE_PLACEHOLDER|${IMAGE_NAME}:${BUILD_NUMBER}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-blue-${VERSION}|g' blue-deployment-template.yaml > blue-deployment.yaml
                         kubectl apply -f blue-deployment.yaml --validate=false
                         kubectl rollout status deployment/fitness-app-blue-${VERSION} --timeout=120s
 
                         # Green Deployment
-                        sed 's|IMAGE_PLACEHOLDER|$IMAGE_NAME:${BUILD_NUMBER}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-green-${VERSION}|g' green-deployment-template.yaml > green-deployment.yaml
+                        sed 's|IMAGE_PLACEHOLDER|${IMAGE_NAME}:${BUILD_NUMBER}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-green-${VERSION}|g' green-deployment-template.yaml > green-deployment.yaml
                         kubectl apply -f green-deployment.yaml --validate=false
                         kubectl rollout status deployment/fitness-app-green-${VERSION} --timeout=120s
                     """
@@ -78,24 +72,38 @@ pipeline {
             steps {
                 withCredentials([file(credentialsId: 'KUBECONFIG_FILE', variable: 'KUBECONFIG')]) {
                     sh """
-                        export KUBECONFIG=$KUBECONFIG_FILE
-                        sed 's|IMAGE_PLACEHOLDER|$IMAGE_NAME:${BUILD_NUMBER}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-shadow-${VERSION}|g' shadow-deployment-template.yaml > shadow-deployment.yaml
+                        sed 's|IMAGE_PLACEHOLDER|${IMAGE_NAME}:${BUILD_NUMBER}|g; s|VERSION_PLACEHOLDER|${VERSION}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-shadow-${VERSION}|g' shadow-deployment-template.yaml > shadow-deployment.yaml
                         kubectl apply -f shadow-deployment.yaml --validate=false
                         kubectl rollout status deployment/fitness-app-shadow-${VERSION} --timeout=120s
-                        
+
                         echo "Monitoring shadow deployment for 60 seconds..."
                         sleep 60
-                        
-                        READY_PODS=$(kubectl get deployment fitness-app-shadow-${VERSION} -o jsonpath={.status.readyReplicas})
-                        TOTAL_PODS=$(kubectl get deployment fitness-app-shadow-${VERSION} -o jsonpath={.status.replicas})
-                        SUCCESS_RATE=$((READY_PODS*100/TOTAL_PODS))
-                        
-                        if [ $SUCCESS_RATE -lt 90 ]; then
+
+                        READY_PODS=\$(kubectl get deployment fitness-app-shadow-${VERSION} -o jsonpath={.status.readyReplicas})
+                        TOTAL_PODS=\$(kubectl get deployment fitness-app-shadow-${VERSION} -o jsonpath={.status.replicas})
+                        SUCCESS_RATE=\$((READY_PODS*100/TOTAL_PODS))
+
+                        if [ \$SUCCESS_RATE -lt 90 ]; then
                             echo "Shadow deployment failed. Aborting pipeline."
                             exit 1
                         fi
-                        
+
                         echo "Shadow deployment healthy."
+                    """
+                }
+            }
+        }
+
+        stage('Canary Release to Green') {
+            steps {
+                withCredentials([file(credentialsId: 'KUBECONFIG_FILE', variable: 'KUBECONFIG')]) {
+                    sh """
+                        for PERCENT in 20 40 60 80 100; do
+                            echo "Shifting \$PERCENT% traffic to Green..."
+                            kubectl patch svc fitness-app-service -p '{"spec":{"selector":{"version":"${VERSION}"}}}' --type=merge
+                            sleep 30
+                        done
+                        echo "Canary promotion complete. 100% traffic now points to Green."
                     """
                 }
             }
@@ -105,37 +113,17 @@ pipeline {
             steps {
                 withCredentials([file(credentialsId: 'KUBECONFIG_FILE', variable: 'KUBECONFIG')]) {
                     sh """
-                        export KUBECONFIG=$KUBECONFIG_FILE
+                        # Deploy alternative B version for A/B testing
+                        sed 's|IMAGE_PLACEHOLDER|${IMAGE_NAME}:${BUILD_NUMBER}|g; s|VERSION_PLACEHOLDER|${VERSION}-B|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-B-${VERSION}|g' ab-testing-template.yaml > ab-deployment-B.yaml
+                        kubectl apply -f ab-deployment-B.yaml --validate=false
+                        kubectl rollout status deployment/fitness-app-B-${VERSION} --timeout=120s
 
-                        # Deploy version A
-                        sed 's|IMAGE_PLACEHOLDER|$IMAGE_NAME:${BUILD_NUMBER}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-A|g' deployment-A-template.yaml | kubectl apply -f -
-                        kubectl rollout status deployment/fitness-app-A --timeout=120s
+                        # Split traffic 50/50 between A (current) and B (new)
+                        kubectl patch svc fitness-app-service -p '{"spec":{"selector":{"version":"A"}}}' --type=merge
+                        kubectl patch svc fitness-app-service-b -p '{"spec":{"selector":{"version":"B"}}}' --type=merge
 
-                        # Deploy version B
-                        sed 's|IMAGE_PLACEHOLDER|$IMAGE_NAME:${BUILD_NUMBER}|g; s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-B|g' deployment-B-template.yaml | kubectl apply -f -
-                        kubectl rollout status deployment/fitness-app-B --timeout=120s
-
-                        # Apply Istio VirtualService for 50/50 split
-                        kubectl apply -f virtualservice-ab.yaml
-                    """
-                }
-            }
-        }
-
-        stage('Canary Promotion') {
-            steps {
-                withCredentials([file(credentialsId: 'KUBECONFIG_FILE', variable: 'KUBECONFIG')]) {
-                    sh """
-                        export KUBECONFIG=$KUBECONFIG_FILE
-                        echo "Starting gradual traffic shift to Version B..."
-                        
-                        for PERCENT in 20 40 60 80 100; do
-                            echo "Shifting \$PERCENT% traffic to Version B..."
-                            kubectl patch svc fitness-app-service -p '{"spec":{"selector":{"version":"vB"}}}' --type=merge
-                            sleep 30
-                        done
-                        
-                        echo "Canary promotion complete. 100% traffic now points to Version B."
+                        echo "A/B testing deployed. Monitoring user traffic split between A and B..."
+                        sleep 60
                     """
                 }
             }
@@ -145,9 +133,9 @@ pipeline {
             steps {
                 sh """
                     mkdir -p build_output
-                    cp Application.py build_output/Application_${VERSION}.py
+                    cp Application.py build_output/Application_${BUILD_NUMBER}.py
                     cd build_output
-                    zip Application_${VERSION}.zip Application_${VERSION}.py
+                    zip Application_${BUILD_NUMBER}.zip Application_${BUILD_NUMBER}.py
                 """
             }
         }
