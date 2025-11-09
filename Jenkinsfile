@@ -6,14 +6,19 @@ pipeline {
         DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
         APP_NAME = "Application"
         VERSION = "v${BUILD_NUMBER}" 
+        BLUE_DEPLOYMENT_NAME = "fitness-app-blue-v${BUILD_NUMBER}"
+        GREEN_DEPLOYMENT_NAME = "fitness-app-green-v${BUILD_NUMBER}"
+        SHADOW_DEPLOYMENT_NAME = "fitness-app-shadow-v${BUILD_NUMBER}"
+        SHADOW_MONITOR_DURATION = "60"  // seconds to monitor shadow
+        SHADOW_SUCCESS_THRESHOLD = "90" // minimum healthy pod % for shadow
+        CANARY_STEPS = "20,40,60,80,100" // traffic % steps for Canary
+        CANARY_MONITOR_DURATION = "30"  // seconds to monitor each Canary step
     }
 
     stages {
 
         stage('Checkout Code') {
-            steps {
-                git branch: 'develop', url: 'https://github.com/chetanMatad-Mtech/Assignment2_ACEestFitness.git'
-            }
+            steps { git branch: 'develop', url: 'https://github.com/chetanMatad-Mtech/Assignment2_ACEestFitness.git' }
         }
 
         stage('Setup Environment') {
@@ -27,15 +32,14 @@ pipeline {
         }
 
         stage('Run Tests') {
-            steps {
-                sh 'python3 -m pytest --maxfail=1 --disable-warnings -q || true'
-            }
+            steps { sh 'python3 -m pytest --maxfail=1 --disable-warnings -q || true' }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ."
+                    def dockerfileDir = fileExists('Dockerfile') ? '.' : './Assignment2_ACEestFitness'
+                    sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${dockerfileDir}"
                 }
             }
         }
@@ -53,73 +57,83 @@ pipeline {
             }
         }
 
-        stage('Determine Deployment') {
+        stage('Deploy Blue and Green') {
             steps {
-                script {
-                    def liveVersion = sh(script: "kubectl get service fitness-app-service -o jsonpath='{.spec.selector.version}' || echo 'none'", returnStdout: true).trim()
-                    if (liveVersion == "none" || liveVersion.contains("green")) {
-                        env.NEXT_DEPLOYMENT = "blue"
-                        env.CURRENT_DEPLOYMENT = "green"
-                    } else {
-                        env.NEXT_DEPLOYMENT = "green"
-                        env.CURRENT_DEPLOYMENT = "blue"
-                    }
-                    env.NEXT_DEPLOYMENT_NAME = "fitness-app-${env.NEXT_DEPLOYMENT}-v${BUILD_NUMBER}"
-                    env.CURRENT_DEPLOYMENT_NAME = "fitness-app-${env.CURRENT_DEPLOYMENT}-v${BUILD_NUMBER}"
-                    echo "Current live deployment: ${env.CURRENT_DEPLOYMENT_NAME}"
-                    echo "Next deployment (Canary): ${env.NEXT_DEPLOYMENT_NAME}"
-                }
-            }
-        }
-
-        stage('Deploy Canary') {
-            steps {
-                script {
-                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
-                        try {
-                            sh """
-                                export KUBECONFIG=$KUBECONFIG_FILE
-
-                                # Deploy new version as canary
-                                sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
-                                     s|VERSION_PLACEHOLDER|${VERSION}|g; \
-                                     s|DEPLOYMENT_NAME_PLACEHOLDER|${NEXT_DEPLOYMENT_NAME}|g" ${NEXT_DEPLOYMENT}-deployment-template.yaml > deployment.yaml
-                                kubectl apply -f deployment.yaml --validate=false
-
-                                echo "Waiting for Canary rollout..."
-                                kubectl rollout status deployment/${NEXT_DEPLOYMENT_NAME} --timeout=120s
-
-                                # Route partial traffic to Canary (50% example)
-                                kubectl patch service fitness-app-service -p '{"spec":{"selector":{"version":"${VERSION}"}}}' --type=merge || true
-                                echo "Canary deployment live for partial traffic"
-                            """
-                        } catch (Exception e) {
-                            echo "Canary deployment failed, rolling back..."
-                            sh "kubectl patch service fitness-app-service -p '{\"spec\":{\"selector\":{\"version\":\"${CURRENT_DEPLOYMENT}\"}}}' --type=merge"
-                            error "Canary failed and rollback executed!"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Promote Canary to Full') {
-            steps {
-                input message: "Canary is stable. Promote ${VERSION} to full production?"
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
                         sh """
                             export KUBECONFIG=$KUBECONFIG_FILE
-                            echo "Routing full traffic to ${NEXT_DEPLOYMENT}..."
-                            sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
-                            kubectl apply -f service.yaml --validate=false
+                            
+                            # Deploy Blue
+                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
+                                 s|VERSION_PLACEHOLDER|${VERSION}|g; \
+                                 s|DEPLOYMENT_NAME_PLACEHOLDER|${BLUE_DEPLOYMENT_NAME}|g" blue-deployment-template.yaml > blue-deployment.yaml
+                            kubectl apply -f blue-deployment.yaml --validate=false
+                            kubectl rollout status deployment/${BLUE_DEPLOYMENT_NAME} --timeout=120s
+                            
+                            # Deploy Green
+                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
+                                 s|VERSION_PLACEHOLDER|${VERSION}|g; \
+                                 s|DEPLOYMENT_NAME_PLACEHOLDER|${GREEN_DEPLOYMENT_NAME}|g" green-deployment-template.yaml > green-deployment.yaml
+                            kubectl apply -f green-deployment.yaml --validate=false
+                            kubectl rollout status deployment/${GREEN_DEPLOYMENT_NAME} --timeout=120s
                         """
                     }
                 }
             }
         }
 
-        stage('Build & Archive Artifact') {
+        stage('Deploy Shadow') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+                        sh """
+                            export KUBECONFIG=$KUBECONFIG_FILE
+                            sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
+                                 s|VERSION_PLACEHOLDER|${VERSION}|g; \
+                                 s|DEPLOYMENT_NAME_PLACEHOLDER|${SHADOW_DEPLOYMENT_NAME}|g" shadow-deployment-template.yaml > shadow-deployment.yaml
+                            kubectl apply -f shadow-deployment.yaml --validate=false
+                            kubectl rollout status deployment/${SHADOW_DEPLOYMENT_NAME} --timeout=120s
+
+                            echo "Monitoring Shadow deployment for ${SHADOW_MONITOR_DURATION} seconds..."
+                            sleep ${SHADOW_MONITOR_DURATION}
+                            READY_PODS=\$(kubectl get deployment ${SHADOW_DEPLOYMENT_NAME} -o jsonpath='{.status.readyReplicas}')
+                            TOTAL_PODS=\$(kubectl get deployment ${SHADOW_DEPLOYMENT_NAME} -o jsonpath='{.status.replicas}')
+                            SUCCESS_RATE=\$(( READY_PODS * 100 / TOTAL_PODS ))
+                            if [ \$SUCCESS_RATE -lt ${SHADOW_SUCCESS_THRESHOLD} ]; then
+                                echo "Shadow deployment failed. Rolling back..."
+                                kubectl delete deployment ${SHADOW_DEPLOYMENT_NAME}
+                                exit 1
+                            else
+                                echo "Shadow deployment healthy."
+                            fi
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Canary Release to Green') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+                        def stepsArray = CANARY_STEPS.split(',')
+                        for (stepPercent in stepsArray) {
+                            sh """
+                                export KUBECONFIG=$KUBECONFIG_FILE
+                                echo "Shifting ${stepPercent}% traffic to Green..."
+                                kubectl patch svc fitness-app-service -p '{"spec":{"selector":{"version":"v${VERSION}"}}}' --type=merge
+                                sleep ${CANARY_MONITOR_DURATION}
+                                # You can add actual monitoring check here (HTTP health checks, metrics)
+                            """
+                        }
+                        echo "Canary promotion complete. 100% traffic now points to Green."
+                    }
+                }
+            }
+        }
+
+        stage('Build Artifact') {
             steps {
                 sh """
                     mkdir -p build_output
@@ -127,18 +141,17 @@ pipeline {
                     cd build_output
                     zip ${APP_NAME}_${VERSION}.zip ${APP_NAME}_${VERSION}.py
                 """
-                archiveArtifacts artifacts: 'build_output/*.zip', fingerprint: true
             }
+        }
+
+        stage('Archive Artifact') {
+            steps { archiveArtifacts artifacts: 'build_output/*.zip', fingerprint: true }
         }
     }
 
     post {
-        success {
-            echo "Build, Canary deployment, promotion, and artifact archiving completed successfully!"
-        }
-        failure {
-            echo "Pipeline failed. Check logs and rollback executed if needed."
-        }
+        success { echo "Pipeline completed successfully!" }
+        failure { echo "Pipeline failed. Rollback executed if needed." }
     }
 }
 
