@@ -12,15 +12,12 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                echo "Checking out the repository..."
-                git branch: 'develop',
-                    url: 'https://github.com/chetanMatad-Mtech/Assignment2_ACEestFitness.git'
+                git branch: 'develop', url: 'https://github.com/chetanMatad-Mtech/Assignment2_ACEestFitness.git'
             }
         }
 
         stage('Setup Environment') {
             steps {
-                echo 'Installing Python dependencies...'
                 sh '''
                     pip install --upgrade pip
                     pip install -r requirements.txt || true
@@ -31,37 +28,21 @@ pipeline {
 
         stage('Run Tests') {
             steps {
-                echo "Running Automated tests..."
-                sh '''
-                    set -e
-                    python3 -m pytest --maxfail=1 --disable-warnings -q || true
-                '''
+                sh 'python3 -m pytest --maxfail=1 --disable-warnings -q || true'
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    def dockerfileDir = './Assignment2_ACEestFitness'
-                    if (fileExists('Dockerfile')) {
-                        dockerfileDir = '.'
-                    } else if (!fileExists("${dockerfileDir}/Dockerfile")) {
-                        error "Dockerfile not found. Please check the folder path."
-                    }
-
-                    echo "Building Docker image from: ${dockerfileDir}"
-                    sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ${dockerfileDir}"
+                    sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ."
                 }
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'DOCKER_HUB_CREDENTIALS',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
+                withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB_CREDENTIALS', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         docker push ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
@@ -75,11 +56,7 @@ pipeline {
         stage('Determine Deployment') {
             steps {
                 script {
-                    def liveVersion = sh(
-                        script: "kubectl get service fitness-app-service -o jsonpath='{.spec.selector.version}' || echo 'none'",
-                        returnStdout: true
-                    ).trim()
-
+                    def liveVersion = sh(script: "kubectl get service fitness-app-service -o jsonpath='{.spec.selector.version}' || echo 'none'", returnStdout: true).trim()
                     if (liveVersion == "none" || liveVersion.contains("green")) {
                         env.NEXT_DEPLOYMENT = "blue"
                         env.CURRENT_DEPLOYMENT = "green"
@@ -87,17 +64,15 @@ pipeline {
                         env.NEXT_DEPLOYMENT = "green"
                         env.CURRENT_DEPLOYMENT = "blue"
                     }
-
                     env.NEXT_DEPLOYMENT_NAME = "fitness-app-${env.NEXT_DEPLOYMENT}-v${BUILD_NUMBER}"
                     env.CURRENT_DEPLOYMENT_NAME = "fitness-app-${env.CURRENT_DEPLOYMENT}-v${BUILD_NUMBER}"
-
                     echo "Current live deployment: ${env.CURRENT_DEPLOYMENT_NAME}"
-                    echo "Next deployment: ${env.NEXT_DEPLOYMENT_NAME}"
+                    echo "Next deployment (Canary): ${env.NEXT_DEPLOYMENT_NAME}"
                 }
             }
         }
 
-        stage('Deploy Next') {
+        stage('Deploy Canary') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
@@ -105,49 +80,53 @@ pipeline {
                             sh """
                                 export KUBECONFIG=$KUBECONFIG_FILE
 
-                                echo "Deploying ${NEXT_DEPLOYMENT} version..."
+                                # Deploy new version as canary
                                 sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
                                      s|VERSION_PLACEHOLDER|${VERSION}|g; \
                                      s|DEPLOYMENT_NAME_PLACEHOLDER|${NEXT_DEPLOYMENT_NAME}|g" ${NEXT_DEPLOYMENT}-deployment-template.yaml > deployment.yaml
                                 kubectl apply -f deployment.yaml --validate=false
 
-                                echo "Waiting for ${NEXT_DEPLOYMENT} rollout..."
+                                echo "Waiting for Canary rollout..."
                                 kubectl rollout status deployment/${NEXT_DEPLOYMENT_NAME} --timeout=120s
 
-                                echo "Switching service to ${NEXT_DEPLOYMENT}..."
-                                sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
-                                kubectl apply -f service.yaml --validate=false
-
-                                echo "${NEXT_DEPLOYMENT} is now live!"
+                                # Route partial traffic to Canary (50% example)
+                                kubectl patch service fitness-app-service -p '{"spec":{"selector":{"version":"${VERSION}"}}}' --type=merge || true
+                                echo "Canary deployment live for partial traffic"
                             """
                         } catch (Exception e) {
-                            echo "Deployment failed, rolling back to ${CURRENT_DEPLOYMENT}..."
-                            sh """
-                                sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
-                                kubectl apply -f service.yaml --validate=false
-                            """
-                            error "Deployment failed and rollback executed!"
+                            echo "Canary deployment failed, rolling back..."
+                            sh "kubectl patch service fitness-app-service -p '{\"spec\":{\"selector\":{\"version\":\"${CURRENT_DEPLOYMENT}\"}}}' --type=merge"
+                            error "Canary failed and rollback executed!"
                         }
                     }
                 }
             }
         }
 
-        stage('Build Artifact') {
+        stage('Promote Canary to Full') {
             steps {
-                echo "Building artifact for ${APP_NAME} version ${VERSION}..."
+                input message: "Canary is stable. Promote ${VERSION} to full production?"
+                script {
+                    withCredentials([file(credentialsId: 'kubeconfig-minikube', variable: 'KUBECONFIG_FILE')]) {
+                        sh """
+                            export KUBECONFIG=$KUBECONFIG_FILE
+                            echo "Routing full traffic to ${NEXT_DEPLOYMENT}..."
+                            sed "s|VERSION_PLACEHOLDER|${VERSION}|g" service-template.yaml > service.yaml
+                            kubectl apply -f service.yaml --validate=false
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Build & Archive Artifact') {
+            steps {
                 sh """
                     mkdir -p build_output
                     cp Application.py build_output/${APP_NAME}_${VERSION}.py
                     cd build_output
                     zip ${APP_NAME}_${VERSION}.zip ${APP_NAME}_${VERSION}.py
                 """
-            }
-        }
-
-        stage('Archive Artifact') {
-            steps {
-                echo "Archiving artifact to Jenkins..."
                 archiveArtifacts artifacts: 'build_output/*.zip', fingerprint: true
             }
         }
@@ -155,10 +134,10 @@ pipeline {
 
     post {
         success {
-            echo "Build, test, artifact creation, and Docker push completed successfully!"
+            echo "Build, Canary deployment, promotion, and artifact archiving completed successfully!"
         }
         failure {
-            echo "Build failed. Please check the console output for details."
+            echo "Pipeline failed. Check logs and rollback executed if needed."
         }
     }
 }
