@@ -53,5 +53,5 @@ def add_workout():
         workouts.append({"workout": workout, "duration": int(duration)})
     return redirect(url_for("home"))
 
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080, debug=True)
