@@ -9,8 +9,8 @@ pipeline {
         FLASK_RUN_HOST    = "0.0.0.0"
         FLASK_ENV         = "production"
 
-        AWS_REGION        = "eu-north-1"                // update if needed
-        EKS_CLUSTER_NAME  = "fitness-eks"               // your EKS cluster name
+        AWS_REGION        = "eu-north-1"
+        EKS_CLUSTER_NAME  = "fitness-eks"
         K8S_NAMESPACE     = "fitness"
     }
 
@@ -18,8 +18,8 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
-                git branch: 'develop', 
-                    url: 'https://github.com/chetanMatad-Mtech/Assignment2_ACEestFitness.git', 
+                git branch: 'develop',
+                    url: 'https://github.com/chetanMatad-Mtech/Assignment2_ACEestFitness.git',
                     credentialsId: 'DOCKER_HUB_CREDENTIALS'
             }
         }
@@ -54,8 +54,8 @@ pipeline {
 
         stage('Push Docker Image to Docker Hub') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB_CREDENTIALS', 
-                                                 usernameVariable: 'DOCKER_USER', 
+                withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB_CREDENTIALS',
+                                                 usernameVariable: 'DOCKER_USER',
                                                  passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
@@ -68,23 +68,25 @@ pipeline {
         }
 
         stage('Deploy to EKS') {
-	    steps {
-        	withAWS(region: 'eu-north-1', credentials: 'AWS_CREDENTIALS') {
-            	sh '''
-                	kubectl apply -f k8s/deployment.yaml
-               	 	kubectl apply -f k8s/service.yaml
-            		'''
-        		}
-    		}
-	}
-
+            steps {
+                withAWS(region: "${AWS_REGION}", credentials: 'AWS_CREDENTIALS') {
+                    sh '''
+                        aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
+                        kubectl apply -f k8s-deploy/namespace.yaml
+                        kubectl apply -f k8s-deploy/deployment.yaml
+                        kubectl apply -f k8s-deploy/service.yaml
+                    '''
+                }
+            }
+        }
+    }
 
     post {
         success {
-            echo "Pipeline completed successfully and deployed to EKS!"
+            echo " Pipeline completed successfully and deployed to EKS!"
         }
         failure {
-            echo "Pipeline failed. Check logs for errors."
+            echo " Pipeline failed. Check logs for details."
         }
     }
 }
