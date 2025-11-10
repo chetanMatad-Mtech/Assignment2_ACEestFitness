@@ -7,6 +7,7 @@ pipeline {
         DEPLOY_STRATEGY = "rolling" // Options: rolling, blue-green, canary, shadow, ab
         AWS_REGION = "eu-north-1"
         EKS_CLUSTER = "fitness-eks"
+        KUBECONFIG = "${env.HOME}/.kube/config"
     }
 
     stages {
@@ -58,8 +59,11 @@ pipeline {
         stage('Deploy to EKS') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-eks-credentials') {
-                    sh "aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION}"
-
+                    sh '''
+                        mkdir -p $HOME/.kube
+                        aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION} --kubeconfig $KUBECONFIG
+                        kubectl config use-context arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${EKS_CLUSTER}
+                    '''
                     script {
                         switch(env.DEPLOY_STRATEGY) {
                             case "rolling":
@@ -68,29 +72,25 @@ pipeline {
                                 break
 
                             case "blue-green":
-                                sh "kubectl apply -f k8s-deploy/blue-deployment.yaml -n ${K8S_NAMESPACE}"
-                                sh "kubectl apply -f k8s-deploy/green-deployment.yaml -n ${K8S_NAMESPACE}"
+                                sh "kubectl apply -f k8s-deploy/blue.yaml -n ${K8S_NAMESPACE}"
+                                sh "kubectl apply -f k8s-deploy/green.yaml -n ${K8S_NAMESPACE}"
                                 sh "kubectl apply -f k8s-deploy/service-blue-green.yaml -n ${K8S_NAMESPACE}"
                                 break
 
                             case "canary":
-                                sh "kubectl apply -f k8s-deploy/canary-deployment.yaml -n ${K8S_NAMESPACE}"
-                                echo "Canary deployment applied. Gradually scale canary pods to test new version."
+                                sh "kubectl apply -f k8s-deploy/canary.yaml -n ${K8S_NAMESPACE}"
+                                echo "Canary deployment applied, monitor traffic gradually."
                                 break
 
                             case "shadow":
-                                sh "kubectl apply -f k8s-deploy/shadow-deployment.yaml -n ${K8S_NAMESPACE}"
-                                echo "Shadow deployment applied. Traffic is mirrored only for testing."
+                                sh "kubectl apply -f k8s-deploy/shadow.yaml -n ${K8S_NAMESPACE}"
+                                echo "Shadow deployment applied, mirrored traffic only."
                                 break
 
                             case "ab":
-                                sh "kubectl apply -f k8s-deploy/ab-deployment.yaml -n ${K8S_NAMESPACE}"
                                 sh "kubectl apply -f k8s-deploy/service-ab.yaml -n ${K8S_NAMESPACE}"
-                                echo "A/B testing deployment applied. Use Ingress or ALB for traffic splitting."
+                                echo "A/B testing enabled via Ingress routing."
                                 break
-
-                            default:
-                                error "Unknown DEPLOY_STRATEGY: ${DEPLOY_STRATEGY}"
                         }
                     }
                 }
@@ -100,7 +100,7 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline completed successfully and deployed using ${DEPLOY_STRATEGY} strategy!"
+            echo "Pipeline completed successfully using ${DEPLOY_STRATEGY} strategy!"
         }
         failure {
             echo "Pipeline failed! Rolling back..."
@@ -110,7 +110,7 @@ pipeline {
                         sh "kubectl rollout undo deployment/fitness-app -n ${K8S_NAMESPACE}"
                         break
                     case "blue-green":
-                        sh "kubectl apply -f k8s-deploy/service-blue.yaml -n ${K8S_NAMESPACE}" // rollback to blue
+                        sh "kubectl apply -f k8s-deploy/service-blue.yaml -n ${K8S_NAMESPACE}"
                         break
                     case "canary":
                         sh "kubectl delete deployment fitness-app-canary -n ${K8S_NAMESPACE}"
@@ -119,7 +119,7 @@ pipeline {
                         sh "kubectl delete deployment fitness-app-shadow -n ${K8S_NAMESPACE}"
                         break
                     case "ab":
-                        sh "kubectl apply -f k8s-deploy/service-a.yaml -n ${K8S_NAMESPACE}" // rollback to stable
+                        sh "kubectl apply -f k8s-deploy/service-ab-stable.yaml -n ${K8S_NAMESPACE}"
                         break
                 }
             }
