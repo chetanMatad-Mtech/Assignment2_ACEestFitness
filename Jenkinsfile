@@ -10,6 +10,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout SCM') {
             steps {
                 git branch: 'develop',
@@ -61,13 +62,15 @@ pipeline {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-eks-credentials') {
                     sh '''
-                        # Ensure kubeconfig exists and is accessible
+                        # Ensure kubeconfig directory exists
                         mkdir -p $(dirname $KUBECONFIG)
                         aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION} --kubeconfig $KUBECONFIG
                         chmod 600 $KUBECONFIG
 
+                        export KUBECONFIG=$KUBECONFIG
+
                         # Ensure namespace exists
-                        kubectl create ns ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        kubectl create ns ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - --validate=false
 
                         # Deploy application
                         kubectl apply -f k8s-deploy/rolling-deployment.yaml -n ${K8S_NAMESPACE} --validate=false
@@ -82,9 +85,9 @@ pipeline {
             script {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-eks-credentials') {
                     sh '''
-                        export KUBECONFIG=/var/lib/jenkins/.kube/config
-                        # Rollback deployment if exists
-                        kubectl rollout undo deployment/fitness-app -n ${K8S_NAMESPACE} || echo "No previous deployment to rollback"
+                        export KUBECONFIG=$KUBECONFIG
+                        # Rollback if previous deployment exists
+                        kubectl rollout undo deployment/fitness-app -n ${K8S_NAMESPACE} --validate=false || echo "No previous deployment to rollback"
                     '''
                 }
             }
