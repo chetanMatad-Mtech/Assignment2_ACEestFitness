@@ -73,32 +73,24 @@ pipeline {
         stage('Deploy Blue/Green') {
             steps {
                 withCredentials([string(credentialsId: 'EKS_KUBECONFIG', variable: 'KUBECONFIG_CONTENT')]) {
-                    sh '''
-                        KUBECONFIG_FILE=$(mktemp)
-                        echo "$KUBECONFIG_CONTENT" > $KUBECONFIG_FILE
+    sh '''
+        KUBECONFIG_FILE=$(mktemp)
+        printf "%s" "$KUBECONFIG_CONTENT" > $KUBECONFIG_FILE
 
-                        # Ensure namespace exists
-                        kubectl create ns fitness --dry-run=client -o yaml --kubeconfig $KUBECONFIG_FILE | kubectl apply -f - --kubeconfig $KUBECONFIG_FILE
+        kubectl create ns fitness --dry-run=client -o yaml --kubeconfig $KUBECONFIG_FILE | kubectl apply -f - --kubeconfig $KUBECONFIG_FILE
 
-                        # Blue deployment
-                        sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
-                             s|VERSION_PLACEHOLDER|${VERSION}|g; \
-                             s|DEPLOYMENT_NAME_PLACEHOLDER|${BLUE_DEPLOYMENT_NAME}|g" k8s-deploy/blue-deployment-template.yaml \
-                             > blue-deployment.yaml
-                        kubectl apply -f blue-deployment.yaml --validate=false --kubeconfig $KUBECONFIG_FILE
-                        kubectl rollout status deployment/${BLUE_DEPLOYMENT_NAME} --timeout=120s --kubeconfig $KUBECONFIG_FILE
+        # Blue deployment
+        sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
+             s|VERSION_PLACEHOLDER|${VERSION}|g; \
+             s|DEPLOYMENT_NAME_PLACEHOLDER|${BLUE_DEPLOYMENT_NAME}|g" k8s-deploy/blue-deployment-template.yaml \
+             > blue-deployment.yaml
+        kubectl apply -f blue-deployment.yaml --validate=false --kubeconfig $KUBECONFIG_FILE
+        kubectl rollout status deployment/${BLUE_DEPLOYMENT_NAME} --timeout=120s --kubeconfig $KUBECONFIG_FILE
 
-                        # Green deployment
-                        sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
-                             s|VERSION_PLACEHOLDER|${VERSION}|g; \
-                             s|DEPLOYMENT_NAME_PLACEHOLDER|${GREEN_DEPLOYMENT_NAME}|g" k8s-deploy/green-deployment-template.yaml \
-                             > green-deployment.yaml
-                        kubectl apply -f green-deployment.yaml --validate=false --kubeconfig $KUBECONFIG_FILE
-                        kubectl rollout status deployment/${GREEN_DEPLOYMENT_NAME} --timeout=120s --kubeconfig $KUBECONFIG_FILE
+        rm -f $KUBECONFIG_FILE
+    '''
+}
 
-                        rm -f $KUBECONFIG_FILE
-                    '''
-                }
             }
         }
 
