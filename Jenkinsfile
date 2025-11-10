@@ -63,6 +63,8 @@ pipeline {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-eks-credentials') {
                     sh '''
                         mkdir -p $HOME/.kube
+
+                        # Generate kubeconfig using EC2 instance role (IAM token)
                         aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION} --kubeconfig $HOME/.kube/config
                         export KUBECONFIG=$HOME/.kube/config
 
