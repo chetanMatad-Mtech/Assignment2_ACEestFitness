@@ -6,6 +6,7 @@ pipeline {
         EKS_CLUSTER = 'fitness-eks'
         K8S_NAMESPACE = 'fitness'
         DOCKER_IMAGE = 'chetanmatadmtech/fitness-app:latest'
+        KUBECONFIG = '/var/lib/jenkins/.kube/config'
     }
 
     stages {
@@ -39,9 +40,7 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build -t ${DOCKER_IMAGE} .
-                """
+                sh "docker build -t ${DOCKER_IMAGE} ."
             }
         }
 
@@ -62,11 +61,10 @@ pipeline {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-eks-credentials') {
                     sh '''
-                        mkdir -p $HOME/.kube
-
-                        # Generate kubeconfig using EC2 instance role (IAM token)
-                        aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION} --kubeconfig $HOME/.kube/config
-                        export KUBECONFIG=$HOME/.kube/config
+                        # Ensure kubeconfig exists and is accessible
+                        mkdir -p $(dirname $KUBECONFIG)
+                        aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION} --kubeconfig $KUBECONFIG
+                        chmod 600 $KUBECONFIG
 
                         # Ensure namespace exists
                         kubectl create ns ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
@@ -84,7 +82,7 @@ pipeline {
             script {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-eks-credentials') {
                     sh '''
-                        export KUBECONFIG=$HOME/.kube/config
+                        export KUBECONFIG=/var/lib/jenkins/.kube/config
                         # Rollback deployment if exists
                         kubectl rollout undo deployment/fitness-app -n ${K8S_NAMESPACE} || echo "No previous deployment to rollback"
                     '''
