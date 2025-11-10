@@ -68,27 +68,16 @@ pipeline {
         }
 
         stage('Deploy to EKS') {
-            steps {
-                withAWS(region: "${AWS_REGION}", credentials: 'aws-eks-creds') {
-                    sh '''
-                        # Update kubeconfig for your cluster
-                        aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+	    steps {
+        	withAWS(region: 'eu-north-1', credentials: 'AWS_CREDENTIALS') {
+            	sh '''
+                	kubectl apply -f k8s/deployment.yaml
+               	 	kubectl apply -f k8s/service.yaml
+            		'''
+        		}
+    		}
+	}
 
-                        # Substitute image tag in deployment file dynamically
-                        sed -i "s|chetanmatadmtech/fitness-app:latest|$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG|g" k8s-deploy/deployment.yaml
-
-                        # Apply manifests to EKS
-                        kubectl apply -f k8s-deploy/namespace.yaml
-                        kubectl apply -f k8s-deploy/deployment.yaml
-                        kubectl apply -f k8s-deploy/service.yaml
-
-                        # Display resources for verification
-                        kubectl get all -n $K8S_NAMESPACE
-                    '''
-                }
-            }
-        }
-    }
 
     post {
         success {
