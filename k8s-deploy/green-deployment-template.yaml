@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: DEPLOYMENT_NAME_PLACEHOLDER
+  namespace: fitness
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fitness-app
+      version: VERSION_PLACEHOLDER
+      deployment: green
+  template:
+    metadata:
+      labels:
+        app: fitness-app
+        version: VERSION_PLACEHOLDER
+        deployment: green
+    spec:
+      containers:
+      - name: fitness-app-container
+        image: IMAGE_PLACEHOLDER
+        ports:
+        - containerPort: 8080
+        env:
+        - name: FLASK_ENV
+          value: production
+
