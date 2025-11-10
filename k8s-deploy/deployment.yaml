@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fitness-app
+  namespace: fitness
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fitness-app
+  template:
+    metadata:
+      labels:
+        app: fitness-app
+    spec:
+      containers:
+      - name: fitness-app-container
+        image: chetanmatadmtech/fitness-app:latest  # or your tag, e.g. v1.0
+        ports:
+        - containerPort: 8080
+        imagePullPolicy: Always
+
