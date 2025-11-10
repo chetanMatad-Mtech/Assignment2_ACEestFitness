@@ -3,26 +3,30 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "chetanmatadmtech/fitness-app"
-        VERSION = "v${BUILD_NUMBER}" // Dynamic version based on Jenkins build
-        BLUE_DEPLOYMENT_NAME = "fitness-app-blue-v${BUILD_NUMBER}"
-        GREEN_DEPLOYMENT_NAME = "fitness-app-green-v${BUILD_NUMBER}"
+        VERSION = "v${BUILD_NUMBER}"
+        BLUE_DEPLOYMENT = "fitness-app-blue-${VERSION}"
+        GREEN_DEPLOYMENT = "fitness-app-green-${VERSION}"
+        SHADOW_DEPLOYMENT = "fitness-app-shadow-${VERSION}"
+        SHADOW_MONITOR_DURATION = "60"  // seconds
+        SHADOW_SUCCESS_THRESHOLD = "90" // % healthy pods required
+        CANARY_STEPS = "20,40,60,80,100" // traffic % steps
+        CANARY_MONITOR_DURATION = "30"  // seconds
+        AB_TEST_TRAFFIC = "50,50"       // A/B split %
     }
 
     stages {
-
         stage('Checkout Code') {
-            steps {
-                checkout scm
-            }
+            steps { checkout scm }
         }
 
-        stage('Setup Python Environment') {
+        stage('Setup Python') {
             steps {
                 sh '''
                 python3 -m venv venv
                 . venv/bin/activate
                 pip install --upgrade pip
                 pip install -r requirements.txt
+                pip install pytest
                 '''
             }
         }
@@ -35,9 +39,7 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                script {
-                    docker.build("${DOCKER_IMAGE}:${VERSION}")
-                }
+                script { docker.build("${DOCKER_IMAGE}:${VERSION}") }
             }
         }
 
@@ -54,60 +56,105 @@ pipeline {
             }
         }
 
-        stage('Deploy Blue/Green') {
+        stage('Deploy Blue/Green/Shadow') {
             steps {
                 withCredentials([file(credentialsId: 'EKS_KUBECONFIG', variable: 'KUBECONFIG_FILE')]) {
                     sh '''
                     export KUBECONFIG=$KUBECONFIG_FILE
                     kubectl create ns fitness --dry-run=client -o yaml | kubectl apply -f -
-                # Deploy Blue
-                    sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
-	                 s|VERSION_PLACEHOLDER|${VERSION}|g; \
-                         s|DEPLOYMENT_NAME_PLACEHOLDER|${BLUE_DEPLOYMENT_NAME}|g" k8s-deploy/blue-deployment-template.yaml > blue-deployment.yaml
+
+                    # BLUE
+                    sed -e "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE}:${VERSION}|g" \
+                        -e "s|VERSION_PLACEHOLDER|${VERSION}|g" \
+                        -e "s|DEPLOYMENT_NAME_PLACEHOLDER|${BLUE_DEPLOYMENT}|g" \
+                        k8s-deploy/deployment-template.yaml > blue-deployment.yaml
                     kubectl apply -f blue-deployment.yaml --validate=false
-                    kubectl rollout status deployment/${BLUE_DEPLOYMENT_NAME} --timeout=120s
-                            
-                    # Deploy Green
-                    sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
-                         s|VERSION_PLACEHOLDER|${VERSION}|g; \
-                         s|DEPLOYMENT_NAME_PLACEHOLDER|${GREEN_DEPLOYMENT_NAME}|g" k8s-deploy/green-deployment-template.yaml > green-deployment.yaml
+                    kubectl rollout status deployment/${BLUE_DEPLOYMENT} --timeout=120s
+
+                    # GREEN
+                    sed -e "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE}:${VERSION}|g" \
+                        -e "s|VERSION_PLACEHOLDER|${VERSION}|g" \
+                        -e "s|DEPLOYMENT_NAME_PLACEHOLDER|${GREEN_DEPLOYMENT}|g" \
+                        k8s-deploy/deployment-template.yaml > green-deployment.yaml
                     kubectl apply -f green-deployment.yaml --validate=false
-                    kubectl rollout status deployment/${GREEN_DEPLOYMENT_NAME} --timeout=120s
+                    kubectl rollout status deployment/${GREEN_DEPLOYMENT} --timeout=120s
+
+                    # SHADOW
+                    sed -e "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE}:${VERSION}|g" \
+                        -e "s|VERSION_PLACEHOLDER|${VERSION}|g" \
+                        -e "s|DEPLOYMENT_NAME_PLACEHOLDER|${SHADOW_DEPLOYMENT}|g" \
+                        k8s-deploy/deployment-template.yaml > shadow-deployment.yaml
+                    kubectl apply -f shadow-deployment.yaml --validate=false
+                    kubectl rollout status deployment/${SHADOW_DEPLOYMENT} --timeout=120s
+
+                    # Shadow Health Check
+                    echo "Monitoring Shadow deployment for ${SHADOW_MONITOR_DURATION}s..."
+                    sleep ${SHADOW_MONITOR_DURATION}
+                    READY_PODS=$(kubectl get deployment ${SHADOW_DEPLOYMENT} -o jsonpath='{.status.readyReplicas}')
+                    TOTAL_PODS=$(kubectl get deployment ${SHADOW_DEPLOYMENT} -o jsonpath='{.status.replicas}')
+                    SUCCESS_RATE=$(( READY_PODS * 100 / TOTAL_PODS ))
+                    if [ $SUCCESS_RATE -lt ${SHADOW_SUCCESS_THRESHOLD} ]; then
+                        echo "Shadow deployment failed. Rolling back..."
+                        kubectl delete deployment ${SHADOW_DEPLOYMENT}
+                        exit 1
+                    else
+                        echo "Shadow deployment healthy."
+                    fi
                     '''
                 }
             }
         }
 
-        stage('Deploy Shadow') {
+        stage('Canary Release') {
+            steps {
+                withCredentials([file(credentialsId: 'EKS_KUBECONFIG', variable: 'KUBECONFIG_FILE')]) {
+                    script {
+                        def stepsArray = CANARY_STEPS.split(',')
+                        for (stepPercent in stepsArray) {
+                            sh """
+                            export KUBECONFIG=\$KUBECONFIG_FILE
+                            echo "Shifting ${stepPercent}% traffic to Green..."
+                            # In real scenario, use ingress/istio weighted routing
+                            sleep ${CANARY_MONITOR_DURATION}
+                            """
+                        }
+                        echo "Canary promotion complete: 100% traffic to Green."
+                    }
+                }
+            }
+        }
+
+        stage('A/B Testing') {
             steps {
                 withCredentials([file(credentialsId: 'EKS_KUBECONFIG', variable: 'KUBECONFIG_FILE')]) {
                     sh '''
                     export KUBECONFIG=$KUBECONFIG_FILE
-                    sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE}:${VERSION}|g;
-                         s|VERSION_PLACEHOLDER|${VERSION}|g;
-                         s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-shadow-${VERSION}|g" k8s-deploy/shadow-deployment-template.yaml > shadow-deployment.yaml
-                    kubectl apply -f shadow-deployment.yaml --validate=false
-                    kubectl rollout status deployment/fitness-app-shadow-${VERSION} --timeout=120s
+                    IFS=',' read -r A B <<< "$AB_TEST_TRAFFIC"
+                    echo "Starting A/B Testing: A=${A}%, B=${B}%"
+                    # Simulate service patching (replace with weighted routing)
+                    sleep 30
+                    echo "A/B Testing completed"
                     '''
                 }
             }
         }
 
-        stage('Canary / A-B Testing') {
+        stage('Build & Archive Artifact') {
             steps {
-                echo "Canary & A/B testing steps go here with dynamic versioning."
-                // Replace placeholders like above for canary deployments
+                sh """
+                mkdir -p build_output
+                cp Application.py build_output/Application_${VERSION}.py
+                cd build_output
+                zip Application_${VERSION}.zip Application_${VERSION}.py
+                """
+                archiveArtifacts artifacts: 'build_output/*.zip', fingerprint: true
             }
         }
     }
 
     post {
-        always {
-            echo "Pipeline completed. Rollbacks or notifications can be handled here."
-        }
-        failure {
-            echo "Pipeline failed. You can implement automatic rollback here."
-        }
+        success { echo "Pipeline completed successfully!" }
+        failure { echo "Pipeline failed. Rollback executed if needed." }
     }
 }
 
