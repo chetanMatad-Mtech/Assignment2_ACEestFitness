@@ -4,6 +4,8 @@ pipeline {
     environment {
         DOCKER_IMAGE = "chetanmatadmtech/fitness-app"
         VERSION = "v${BUILD_NUMBER}" // Dynamic version based on Jenkins build
+        BLUE_DEPLOYMENT_NAME = "fitness-app-blue-v${BUILD_NUMBER}"
+        GREEN_DEPLOYMENT_NAME = "fitness-app-green-v${BUILD_NUMBER}"
     }
 
     stages {
@@ -58,12 +60,19 @@ pipeline {
                     sh '''
                     export KUBECONFIG=$KUBECONFIG_FILE
                     kubectl create ns fitness --dry-run=client -o yaml | kubectl apply -f -
-                    # Replace placeholders in YAML and apply
-                    sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE}:${VERSION}|g;
-                         s|VERSION_PLACEHOLDER|${VERSION}|g;
-                         s|DEPLOYMENT_NAME_PLACEHOLDER|fitness-app-blue-${VERSION}|g" k8s-deploy/blue-deployment-template.yaml > blue-deployment.yaml
+                # Deploy Blue
+                    sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
+	                 s|VERSION_PLACEHOLDER|${VERSION}|g; \
+                         s|DEPLOYMENT_NAME_PLACEHOLDER|${BLUE_DEPLOYMENT_NAME}|g" k8s-deploy/blue-deployment-template.yaml > blue-deployment.yaml
                     kubectl apply -f blue-deployment.yaml --validate=false
-                    kubectl rollout status deployment/fitness-app-blue-${VERSION} --timeout=120s
+                    kubectl rollout status deployment/${BLUE_DEPLOYMENT_NAME} --timeout=120s
+                            
+                    # Deploy Green
+                    sed "s|IMAGE_PLACEHOLDER|${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g; \
+                         s|VERSION_PLACEHOLDER|${VERSION}|g; \
+                         s|DEPLOYMENT_NAME_PLACEHOLDER|${GREEN_DEPLOYMENT_NAME}|g" k8s-deploy/green-deployment-template.yaml > green-deployment.yaml
+                    kubectl apply -f green-deployment.yaml --validate=false
+                    kubectl rollout status deployment/${GREEN_DEPLOYMENT_NAME} --timeout=120s
                     '''
                 }
             }
